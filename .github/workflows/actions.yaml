@@ -34,11 +34,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   dockerImage:
-    needs: [releasePackage] # 确保在发布包之后运行
+    needs: [releasePackage]
     name: buildDockerImageForARM64
-    # 关键修改：使用 ARM64 的 runner
-    runs-on: 'ubuntu-ARM' # GitHub Actions 提供的 ARM64 runner
-
+    # 仍然使用 ubuntu-latest runner，因为我们现在使用交叉编译
+    runs-on: ubuntu-latest
     steps:
       - name: SetupGo
         uses: actions/setup-go@v3
@@ -51,37 +50,38 @@ jobs:
       - name: GoTidy
         run: |
           go mod tidy
-      - name: Pack  # 运行打包脚本并且将生成的tar包复制至Dockerfile所在目录
-        # 关键修改：确保 package.sh 脚本生成 ARM64 版本的二进制包
-        # 假设 package.sh 支持传入目标架构，例如：
-        # ./build/cmd/package.sh ${{ steps.vars.outputs.tag }} --goos=linux --goarch=arm64
-        # 如果 package.sh 不支持，你需要修改这个脚本或此处的调用方式
+      - name: Cross Compile Binary  # 修改此步骤
         run: |
-          # !!! 重要：请确认 package.sh 是否会生成 ARM64 二进制文件 !!!
-          # 如果 package.sh 默认生成 amd64，你需要修改它或调用方式。
-          ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
-          # 确保生成的文件名和路径与 Dockerfile 期望的一致
-          # 假设 package.sh 会生成 apinto_${tag}_linux_arm64.tar.gz
-          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.arm64.tar.gz
-          # !!! 确保下面的文件名与上面 cp 命令的文件名匹配，并且 Dockerfile 使用了正确的文件名 !!!
-          # 例如，如果 Dockerfile 使用的是 apinto.linux.arm64.tar.gz，那么这里就要复制并重命名为这个文件名。
-          # cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.x64.tar.gz # 这行是错误的，如果目标是arm64
+          # 设置交叉编译环境变量
+          export GOOS=linux
+          export GOARCH=arm64
+          # export GOARM=7 # 如果需要针对特定ARMv7版本
 
-      - name: Login Docker   # 登录docker
+          # 执行构建，将二进制文件输出到指定目录
+          # 假设主包是 cmd/apinto/ 且入口点是 main.go
+          # 根据你的实际项目结构调整路径和包名
+          go build -o ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 ./cmd/apinto
+          # 或者，如果只有一个 main.go 文件在 cmd/apinto/ 下
+          # go build -o ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 cmd/apinto/main.go
+
+          # 确保输出目录存在
+          mkdir -p ./build/resources
+          # 将交叉编译生成的二进制文件复制到 Dockerfile 期望的目录
+          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 ./build/resources/apinto.linux.arm64
+          # !!! 确保 Dockerfile 中的 COPY 指令指向的是 'apinto.linux.arm64' 这个文件名 !!!
+      - name: Login Docker
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
-
       - name: buildImage
-        # 关键修改：确保 Dockerfile 能够正确使用 ARM64 二进制包来构建 ARM64 镜像
-        # Dockerfile 的 FROM 指令也应该使用 ARM64 的基础镜像，例如：FROM arm64v8/debian:bullseye
         run: |
-          # 确保使用正确的文件名
+          # 确保 Dockerfile 使用正确的文件名和基础镜像
+          # Dockerfile 的 FROM 应该是 ARM64 的，例如 arm64v8/debian
+          # Dockerfile 的 COPY 应该是 COPY apinto.linux.arm64 ...
           docker build -t ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} -f ./build/resources/Dockerfile ./build/resources
-
       - name: pushImage
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }}
-          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest # 可选：使用 arm64-latest 标签
-          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest # 可选：推送 arm64-latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest
