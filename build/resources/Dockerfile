@@ -12,7 +12,7 @@ WORKDIR /app
 COPY apinto.linux.arm64.tar.gz /app/
 
 # 解压二进制文件
-RUN tar -zxvf apinto.linux.${ARCH}.tar.gz \
+RUN tar -zxvf apinto.linux.arm64.tar.gz \
     && chmod +x /app/apinto
 
 # 设置启动命令
