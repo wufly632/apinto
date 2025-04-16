@@ -1,22 +1,16 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-. $(dirname $0)/common.sh
+TAG=$1
+ARCH=${2:-amd64}
 
-cd ${BasePath}/
+echo "Building for arch=${ARCH}"
 
+OUT_DIR=./out/apinto-${TAG}-${ARCH}
+rm -rf ${OUT_DIR}
+mkdir -p ${OUT_DIR}
 
-VERSION=$(genVersion $1)
-folder="${BasePath}/out/apinto-${VERSION}"
-ARCH=$2
-if [[ ! -d "$folder" ]]
-then
-#  mkdir -p "$folder"
-  ${CMD}/build.sh $1 ${ARCH}
-  if [[ "$?" != "0" ]]
-  then
-    exit 1
-  fi
-fi
-packageApp apinto $VERSION ${ARCH}
+# You can add CGO_ENABLED=0 for static build
+CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags "...version info..." -o ${OUT_DIR}/apinto ./app/apinto
 
-cd ${ORGPATH}
+# tar.gz package
+tar -czvf ./out/apinto_${TAG}_linux_${ARCH}.tar.gz -C ./out apinto-${TAG}-${ARCH}
