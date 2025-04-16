@@ -1,15 +1,16 @@
 name: packAndDockerImages
-#触发机制，当main分支有创建tag时
+# 触发机制，当main分支有创建tag时
 on:
   release:
     types:
       - published
+
 jobs:
   releasePackage:
     name: releaseOnGithub
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # 保持 amd64 runner 用于发布二进制包
     steps:
-      - name: SetOutput #处理Tag字符串并存进outputs
+      - name: SetOutput # 处理Tag字符串并存进outputs
         id: vars
         run: |
           echo "tag=${GITHUB_REF#refs/*/v}" >> $GITHUB_OUTPUT
@@ -17,24 +18,27 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: '1.21.1'
-      - name: Checkout  #Checkout代码
+      - name: Checkout  # Checkout代码
         uses: actions/checkout@v3
       - name: GoTidy
         run: |
           go mod tidy
           echo "GOVERSION=$(go version)" >> $GITHUB_ENV
           echo "EoscVersion=$(sed -n 's/.*eosc v/v/p' go.mod)" >> $GITHUB_ENV
-      - name: Create archives on Release   #创建各种系统架构下的二进制包并上传至release assets
+      - name: Create archives on Release   # 创建各种系统架构下的二进制包并上传至release assets
         uses: goreleaser/goreleaser-action@v3.1.0
         with:
           version: 1.9.2
           args: release --rm-dist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   dockerImage:
-    needs: [releasePackage]
-    name: buildDockerImage
-    runs-on: ubuntu-latest
+    needs: [releasePackage] # 确保在发布包之后运行
+    name: buildDockerImageForARM64
+    # 关键修改：使用 ARM64 的 runner
+    runs-on: 'ubuntu-ARM' # GitHub Actions 提供的 ARM64 runner
+
     steps:
       - name: SetupGo
         uses: actions/setup-go@v3
@@ -47,20 +51,37 @@ jobs:
       - name: GoTidy
         run: |
           go mod tidy
-      - name: Pack  #运行打包脚本并且将生成的tar包复制至Dockerfile所在目录
+      - name: Pack  # 运行打包脚本并且将生成的tar包复制至Dockerfile所在目录
+        # 关键修改：确保 package.sh 脚本生成 ARM64 版本的二进制包
+        # 假设 package.sh 支持传入目标架构，例如：
+        # ./build/cmd/package.sh ${{ steps.vars.outputs.tag }} --goos=linux --goarch=arm64
+        # 如果 package.sh 不支持，你需要修改这个脚本或此处的调用方式
         run: |
+          # !!! 重要：请确认 package.sh 是否会生成 ARM64 二进制文件 !!!
+          # 如果 package.sh 默认生成 amd64，你需要修改它或调用方式。
           ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
-          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_amd64.tar.gz ./build/resources/apinto.linux.x64.tar.gz
-      - name: Login Docker   #登录docker
+          # 确保生成的文件名和路径与 Dockerfile 期望的一致
+          # 假设 package.sh 会生成 apinto_${tag}_linux_arm64.tar.gz
+          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.arm64.tar.gz
+          # !!! 确保下面的文件名与上面 cp 命令的文件名匹配，并且 Dockerfile 使用了正确的文件名 !!!
+          # 例如，如果 Dockerfile 使用的是 apinto.linux.arm64.tar.gz，那么这里就要复制并重命名为这个文件名。
+          # cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.x64.tar.gz # 这行是错误的，如果目标是arm64
+
+      - name: Login Docker   # 登录docker
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
+
       - name: buildImage
+        # 关键修改：确保 Dockerfile 能够正确使用 ARM64 二进制包来构建 ARM64 镜像
+        # Dockerfile 的 FROM 指令也应该使用 ARM64 的基础镜像，例如：FROM arm64v8/debian:bullseye
         run: |
+          # 确保使用正确的文件名
           docker build -t ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} -f ./build/resources/Dockerfile ./build/resources
+
       - name: pushImage
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }}
-          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest # 可选：使用 arm64-latest 标签
+          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest # 可选：推送 arm64-latest
