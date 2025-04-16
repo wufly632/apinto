@@ -1,16 +1,16 @@
+
 name: packAndDockerImages
-# 触发机制，当main分支有创建tag时
+#触发机制，当main分支有创建tag时
 on:
   release:
     types:
       - published
-
 jobs:
   releasePackage:
     name: releaseOnGithub
-    runs-on: ubuntu-latest # 保持 amd64 runner 用于发布二进制包
+    runs-on: ubuntu-latest
     steps:
-      - name: SetOutput # 处理Tag字符串并存进outputs
+      - name: SetOutput #处理Tag字符串并存进outputs
         id: vars
         run: |
           echo "tag=${GITHUB_REF#refs/*/v}" >> $GITHUB_OUTPUT
@@ -18,25 +18,23 @@ jobs:
         uses: actions/setup-go@v3
         with:
           go-version: '1.21.1'
-      - name: Checkout  # Checkout代码
+      - name: Checkout  #Checkout代码
         uses: actions/checkout@v3
       - name: GoTidy
         run: |
           go mod tidy
           echo "GOVERSION=$(go version)" >> $GITHUB_ENV
           echo "EoscVersion=$(sed -n 's/.*eosc v/v/p' go.mod)" >> $GITHUB_ENV
-      - name: Create archives on Release   # 创建各种系统架构下的二进制包并上传至release assets
+      - name: Create archives on Release   #创建各种系统架构下的二进制包并上传至release assets
         uses: goreleaser/goreleaser-action@v3.1.0
         with:
           version: 1.9.2
           args: release --rm-dist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   dockerImage:
     needs: [releasePackage]
-    name: buildDockerImageForARM64
-    # 仍然使用 ubuntu-latest runner，因为我们现在使用交叉编译
+    name: buildDockerImage
     runs-on: ubuntu-latest
     steps:
       - name: SetupGo
@@ -50,38 +48,20 @@ jobs:
       - name: GoTidy
         run: |
           go mod tidy
-      - name: Cross Compile Binary  # 修改此步骤
+      - name: Pack  #运行打包脚本并且将生成的tar包复制至Dockerfile所在目录
         run: |
-          # 设置交叉编译环境变量
-          export GOOS=linux
-          export GOARCH=arm64
-          # export GOARM=7 # 如果需要针对特定ARMv7版本
-
-          # 执行构建，将二进制文件输出到指定目录
-          # 假设主包是 cmd/apinto/ 且入口点是 main.go
-          # 根据你的实际项目结构调整路径和包名
-          go build -o ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 ./cmd/apinto
-          # 或者，如果只有一个 main.go 文件在 cmd/apinto/ 下
-          # go build -o ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 cmd/apinto/main.go
-
-          # 确保输出目录存在
-          mkdir -p ./build/resources
-          # 将交叉编译生成的二进制文件复制到 Dockerfile 期望的目录
-          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64 ./build/resources/apinto.linux.arm64
-          # !!! 确保 Dockerfile 中的 COPY 指令指向的是 'apinto.linux.arm64' 这个文件名 !!!
-      - name: Login Docker
+          ./build/cmd/package.sh ${{ steps.vars.outputs.tag }}
+          cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.x64.tar.gz
+      - name: Login Docker   #登录docker
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_TOKEN }}
       - name: buildImage
         run: |
-          # 确保 Dockerfile 使用正确的文件名和基础镜像
-          # Dockerfile 的 FROM 应该是 ARM64 的，例如 arm64v8/debian
-          # Dockerfile 的 COPY 应该是 COPY apinto.linux.arm64 ...
           docker build -t ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} -f ./build/resources/Dockerfile ./build/resources
       - name: pushImage
         run: |
           docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }}
-          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest
-          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:arm64-latest
+          docker tag ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:latest
+          docker push ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:latest
