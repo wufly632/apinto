@@ -1,4 +1,4 @@
-name: releaseAndBuildMultiArchDockerImage
+name: releaseAndBuildArmDockerImage
 
 on:
   release:
@@ -6,7 +6,7 @@ on:
 
 jobs:
   build_and_release:
-    name: Build, Package and Push Multi-Arch Docker Image
+    name: Build, Package and Push ARM Docker Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -24,13 +24,6 @@ jobs:
       - name: Ensure dependencies
         run: go mod tidy
 
-      # === Build amd64 package ===
-      - name: Build amd64 binary package
-        run: |
-          chmod +x ./build/cmd/package.sh
-          ./build/cmd/package.sh ${{ steps.vars.outputs.tag }} amd64
-          ls -l ./out/
-      
       # === Build arm64 package ===
       - name: Build arm64 binary package
         run: |
@@ -39,9 +32,6 @@ jobs:
           ls -l ./out/
 
       # === Prepare Docker resources ===
-      - name: Copy amd64 package to Docker resources
-        run: cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_amd64.tar.gz ./build/resources/apinto.linux.amd64.tar.gz
-
       - name: Copy arm64 package to Docker resources
         run: cp ./out/apinto_${{ steps.vars.outputs.tag }}_linux_arm64.tar.gz ./build/resources/apinto.linux.arm64.tar.gz
 
@@ -62,7 +52,7 @@ jobs:
       - name: Build and push multi-architecture docker image
         run: |
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform linux/arm64 \
             -t ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:${{ steps.vars.outputs.tag }} \
             --push \
             -f ./build/resources/Dockerfile ./build/resources
@@ -71,7 +61,7 @@ jobs:
       - name: Tag and push latest image
         run: |
           docker buildx build \
-            --platform linux/amd64,linux/arm64 \
+            --platform linux/arm64 \
             -t ${{ secrets.DOCKER_USERNAME }}/apinto-gateway:latest \
             --push \
             -f ./build/resources/Dockerfile ./build/resources

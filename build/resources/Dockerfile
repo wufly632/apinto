@@ -1,33 +1,19 @@
-# 名称：apinto镜像，携带了部署k8s集群所需要的脚本
-# 创建时间：2024-11-19
-FROM alpine:latest
+# Alpine是非常轻量的linux发行版
+FROM alpine:3.17
 
-RUN sed -i 's|https://dl-cdn.alpinelinux.org/alpine|https://mirrors.aliyun.com/alpine|g' /etc/apk/repositories  \
-    && apk update \
-    && apk add --no-cache bash tzdata
+# 创建应用目录
+WORKDIR /app
 
-RUN apk add --no-cache netcat-openbsd curl
+# 复制二进制压缩包，命名需和package.sh一致，Dockerfile构建时用对应架构名称
+# 架构变量由workflow的builder拷贝对应文件确定，比如 apinto.linux.amd64.tar.gz
+ARG ARCH=amd64
 
-ENV TZ=Asia/Shanghai
+# 这里固定内容，workflow中替换文件名即可
+COPY apinto.linux.${ARCH}.tar.gz /app/
 
-RUN cp /usr/share/zoneinfo/${TZ} /etc/localtime && echo ${TZ} > /etc/timezone
+# 解压二进制文件
+RUN tar -zxvf apinto.linux.${ARCH}.tar.gz \
+    && chmod +x /app/apinto
 
-#设置环境变量
-ARG AppName=apinto
-
-#定义数据卷
-VOLUME /var/lib/${AppName}
-
-#解压网关程序压缩包
-COPY ./apinto.linux.x64.tar.gz /
-RUN tar -zxvf apinto.linux.x64.tar.gz && ls /${AppName} / && rm -rf ../apinto.linux.x64.tar.gz
-
-#复制程序默认配置文件以及修改脚本权限
-RUN mkdir /etc/${AppName}
-RUN cp /${AppName}/${AppName}.yml.tpl /etc/${AppName}/${AppName}.yml && cp /${AppName}/config.yml.tpl /etc/${AppName}/config.yml
-
-RUN chmod 777 /${AppName}/*.sh
-
-WORKDIR /apinto
-
-CMD ["bash","/apinto/auto-start.sh"]
+# 设置启动命令
+CMD ["/app/apinto"]
